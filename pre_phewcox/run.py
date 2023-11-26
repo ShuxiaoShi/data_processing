@@ -1,12 +1,25 @@
+"""
+See example data at ~/nutrition/pre_phewcox/data_test
+Test dataset from:
+    head -n 100 data/baseline_date.csv > data_test/baseline_date.csv
+    head -n 100 data/after_trans.csv > data_test/after_trans.csv
+    head -n 100 data/after_trans_date.csv > data_test/after_trans_date.csv
+    head -n 100 data/cencor_date.csv > data_test/cencor_date.csv
+    
+head -n 100 ../prepare_data/pca_white_group/baseline_date.csv > data_test/baseline_date.csv
+head -n 100 ../prepare_data/pca_white_group/after_trans.csv > data_test/after_trans.csv
+head -n 100 ../prepare_data/pca_white_group/after_trans_date.csv > data_test/after_trans_date.csv
+head -n 100 ../prepare_data/pca_white_group/cencor_date.csv > data_test/cencor_date.csv
+    
+Running test command:
+    > python run.py --clip3 --round2day --min_disease_num 10 --input_path ./data_test/ --out fpca/out.csv
+
+"""
 import numpy as np
 import pandas as pd
 import argparse
 import time
-
-# head -n 100 data/baseline_date.csv > data_test/baseline_date.csv
-# head -n 100 data/after_trans.csv > data_test/after_trans.csv
-# head -n 100 data/after_trans_date.csv > data_test/after_trans_date.csv
-# head -n 100 data/cencor_date.csv > data_test/cencor_date.csv
+import os
 
 
 def load_table(fname):
@@ -40,19 +53,22 @@ def step2(tb, ):
     return tb
 
 def step3(tb, file3):
-    tb_bsl = pd.read_csv(file3, index_col=0, dtype=str)
+    tb_bsl = pd.read_csv(file3, index_col=False, dtype=str)
+    # ignore the column name at columns[1]
+    tb_bsl.rename(columns={tb_bsl.columns[1]: 'new_nutrition_date2'}, inplace=True)
+    
     merge_tb = pd.merge(tb, tb_bsl, how="left", on="n_eid", validate="m:1")
     merge_tb["disease_date"] = pd.to_numeric(merge_tb["disease_date"])
     merge_tb["new_nutrition_date2"] = pd.to_numeric(merge_tb["new_nutrition_date2"])
     merge_tb["date_diff"] = merge_tb["disease_date"] - merge_tb["new_nutrition_date2"]
     merge_tb.drop(merge_tb[merge_tb.date_diff < 0].index, inplace=True)
-    print(f"remove date_diff < 0: {tb.shape[0]} -> {merge_tb.shape[0]}")
+    print(f"[INFO] remove date_diff < 0: {tb.shape[0]} -> {merge_tb.shape[0]}")
     return merge_tb, tb_bsl
 
 def step4(tb, tb_bsl, file4, args):
     # print(tb[~tb.isna().any(axis=1)])
 
-    tb_censor = pd.read_csv(file4, index_col=0, dtype=str)
+    tb_censor = pd.read_csv(file4, index_col=False, dtype=str)
     tb_censor["cencer_date"] = pd.to_datetime(tb_censor["cencer_date"])
 
     # get sencor date and convert to sas-day value
@@ -81,6 +97,16 @@ def step4(tb, tb_bsl, file4, args):
     tb_exist = tb2.notna()
     tb_exist = tb_exist.apply(lambda x: x.astype('Int8'))
     tb_filled = tb2.apply(lambda col: col.fillna(tb_censor_fillna["date_diff"])).astype(int)
+    
+    # filter = ()
+    
+    # print(filter.index[:4])
+    if args.min_disease_num > 0:
+        before_num = len(tb_exist.columns)
+        tb_exist = tb_exist.loc[:, tb_exist.sum(axis=0) > args.min_disease_num]
+        after_num = len(tb_exist.columns)
+        tb_filled = tb_filled.loc[:, tb_exist.columns]
+        print(f"[INFO] filter with min disease num {args.min_disease_num}, {before_num}->{after_num}")
 
     # merge two table and reindex
     tb_all = pd.merge(tb_exist, tb_filled, on="n_eid", suffixes=("", "_len"))
@@ -95,18 +121,19 @@ if __name__ == "__main__":
     # print(s2 + pd.Timedelta(18985, unit="D"))
 
     parser = argparse.ArgumentParser(description='')
-    parser.add_argument('--clip3', action="store_true", help="only keep 3 of desease name")
+    parser.add_argument('--clip3', action="store_true", help="only keep 3 of disease name")
     parser.add_argument('--round2day', action="store_true", help="only keep day time")
     parser.add_argument('--out', type=str, default="out.csv")
     parser.add_argument("--input_path", type=str, default="./data/")
+    parser.add_argument("--min_disease_num", type=int, default=0)
     args = parser.parse_args()
 
     dpath = args.input_path
 
-    file1 = dpath+"after_trans.csv"
-    file2 = dpath+"after_trans_date.csv"
-    file3 = dpath+"baseline_date.csv"
-    file4 = dpath+"cencor_date.csv"
+    file1 = os.path.join(dpath, "after_trans.csv")
+    file2 = os.path.join(dpath, "after_trans_date.csv")
+    file3 = os.path.join(dpath, "baseline_date.csv")
+    file4 = os.path.join(dpath, "cencor_date.csv")
 
     print("running args:", args)
     print("Step1 -----")
@@ -118,7 +145,7 @@ if __name__ == "__main__":
     tb, tb_bsl = step3(tb, file3)
     print("Step4 -----")
     tb_all = step4(tb, tb_bsl, file4, args)
-    print(f"dump results to {args.out}")
+    print(f"[INFO] dump results to {args.out}")
     tb_all.to_csv(args.out)
     
 
